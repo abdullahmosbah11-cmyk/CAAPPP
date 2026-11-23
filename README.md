@@ -18,7 +18,7 @@ Student types problem → LLM solves it → LLM formalizes into Lean 4 template
 
 ## Hardware
 
-- **Raspberry Pi 4 (4 GB RAM)** — runs Lean 4 + Python backend + MQTT broker
+- **Raspberry Pi 4 (8 GB RAM)** — runs Lean 4 + Python backend + Qwen2.5-1.5B/3B Q4_K_M + MQTT broker
 - **HDMI Monitor + USB keyboard/mouse** — student interface
 - **Internet** (optional) — for Firebase Firestore telemetry sync
 

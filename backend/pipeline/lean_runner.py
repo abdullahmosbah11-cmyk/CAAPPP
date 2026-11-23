@@ -65,8 +65,14 @@ _LEAN_FILE_HEADER = """\
 import Mathlib.Tactic
 import Mathlib.Analysis.SpecialFunctions.Trigonometric.Deriv
 import Mathlib.Analysis.SpecialFunctions.Pow.Real
-import Mathlib.MeasureTheory.Integral.IntervalIntegral
+import Mathlib.Analysis.SpecialFunctions.Log.Deriv
+import Mathlib.Analysis.SpecialFunctions.Integrals.Basic
+import Mathlib.MeasureTheory.Integral.IntervalIntegral.Basic
+import Mathlib.MeasureTheory.Integral.IntervalIntegral.FundThmCalculus
 import Mathlib.Data.Nat.Prime.Basic
+
+set_option linter.unusedSimpArgs false
+set_option linter.unusedTactic false
 
 -- VeriMath auto-generated verification file
 -- DO NOT EDIT manually
@@ -102,6 +108,16 @@ async def verify_async(lean_statement: str, timeout_seconds: int = LEAN_TIMEOUT)
     Returns:
         LeanResult with verdict and raw output.
     """
+    # Zero-Trust Guardrail: never allow 'sorry', 'admit', or custom 'axiom'
+    if re.search(r"\b(sorry|admit|axiom)\b", lean_statement):
+        logger.warning("❌ Zero-trust rejection: statement contains forbidden 'sorry', 'admit', or 'axiom'.")
+        return LeanResult(
+            verdict=LeanVerdict.REJECTED,
+            lean_output="Zero-trust policy: unproven 'sorry', 'admit', or custom 'axiom' is forbidden.",
+            elapsed_ms=0,
+            lean_file="",
+        )
+
     # Write the temp Lean file
     lean_file = VERIFY_TMPDIR / f"stmt_{time.monotonic_ns()}.lean"
     lean_content = _LEAN_FILE_HEADER + lean_statement + "\n"
@@ -145,6 +161,14 @@ async def verify_async(lean_statement: str, timeout_seconds: int = LEAN_TIMEOUT)
                 lean_file=str(lean_file),
             )
         elif code == "NOT_FOUND":
+            if os.getenv("VERIMATH_STRICT_LEAN", "false").lower() in ("1", "true", "yes"):
+                logger.error("❌ VERIMATH_STRICT_LEAN is enabled and Lean binary was not found.")
+                return LeanResult(
+                    verdict=LeanVerdict.ENGINE_ERROR,
+                    lean_output=combined_output,
+                    elapsed_ms=elapsed_ms,
+                    lean_file=str(lean_file),
+                )
             logger.info("Lean binary not found. Using SymPy CAS verification fallback (Dev Mode; Lean 4 active on Pi)...")
             sympy_ok = _verify_with_sympy(lean_statement)
             if sympy_ok:
@@ -252,7 +276,7 @@ def _parse_lean_output(
 
 
 def _has_lean_errors(output: str) -> bool:
-    """Check if Lean output contains error markers."""
+    """Check if Lean output contains error markers or unproven sorry warnings."""
     error_patterns = [
         r"\berror\b",
         r"unsolved goals",
@@ -260,6 +284,8 @@ def _has_lean_errors(output: str) -> bool:
         r"unknown identifier",
         r"failed to synthesize",
         r"application type mismatch",
+        r"uses 'sorry'",
+        r"\bsorry\b",
     ]
     output_lower = output.lower()
     return any(re.search(p, output_lower) for p in error_patterns)
@@ -321,6 +347,7 @@ def _verify_with_sympy(lean_statement: str) -> bool:
             s = s.replace("Real.arccos", "acos")
             s = s.replace("Real.arcsin", "asin")
             s = s.replace("Real.asec", "asec")
+            s = s.replace("Complex.I", "I")
             s = s.replace("Real.exp", "exp")
             s = s.replace("Real.log", "log")
             s = s.replace("Real.sqrt", "sqrt")
@@ -348,7 +375,7 @@ def _verify_with_sympy(lean_statement: str) -> bool:
         if ("hdydx" in stmt or "hden" in stmt) and "hcurve" in stmt:
             return True
 
-        if "↔" in stmt and ("x -" in stmt or "x0" in stmt or "slope" in stmt or "x =" in stmt or "y -" in stmt):
+        if "↔" in stmt and "by omega" not in stmt and ("y -" in stmt or "slope" in stmt or "x0" in stmt or (re.search(r"\by\b", stmt) and ("x -" in stmt or "x =" in stmt))):
             m_tan = re.search(r":\s*\((.+?)\)\s*↔\s*\((.+?)\)\s*:= by", stmt)
             if m_tan:
                 eq1, eq2 = m_tan.groups()
@@ -387,7 +414,22 @@ def _verify_with_sympy(lean_statement: str) -> bool:
             conjuncts = eq_part.split("∧")
             all_ok = True
             for c in conjuncts:
-                c_clean = re.sub(r"\((.+?)\s*:\s*(?:ℝ|Real|R)\)", r"(\1)", c).strip()
+                c_clean = re.sub(r"\s*:\s*(?:ℝ|Real|R)(?=\))", "", c).strip()
+                while c_clean.startswith("(") and c_clean.endswith(")"):
+                    depth = 0
+                    balanced_outer = True
+                    for idx_ch, ch in enumerate(c_clean):
+                        if ch == "(":
+                            depth += 1
+                        elif ch == ")":
+                            depth -= 1
+                            if depth == 0 and idx_ch < len(c_clean) - 1:
+                                balanced_outer = False
+                                break
+                    if balanced_outer and depth == 0:
+                        c_clean = c_clean[1:-1].strip()
+                    else:
+                        break
                 if "=" in c_clean:
                     h0, h1 = c_clean.split("=", 1)
                     lhs_str = _py_expr(h0)
@@ -409,7 +451,7 @@ def _verify_with_sympy(lean_statement: str) -> bool:
             return all_ok
 
         # ── Primality ────────────────────────────────────────────────────────
-        m = re.search(r"Nat\.Prime\s+(\d+)\s*:= by", stmt)
+        m = None if "¬" in stmt else re.search(r"Nat\.Prime\s+(\d+)\s*:= by", stmt)
         if m:
             return isprime(int(m.group(1)))
 
@@ -456,7 +498,7 @@ def _verify_with_sympy(lean_statement: str) -> bool:
                 return bool(sympy.simplify(calc_slope - ans_v) == 0)
 
         # ── Implicit tangent line equivalence ────────────────────────────────
-        if "↔" in stmt and ("x -" in stmt or "x0" in stmt or "slope" in stmt or "x =" in stmt or "y -" in stmt):
+        if "↔" in stmt and "by omega" not in stmt and ("y -" in stmt or "slope" in stmt or "x0" in stmt or (re.search(r"\by\b", stmt) and ("x -" in stmt or "x =" in stmt))):
             m_tan = re.search(r"\((.+?)\)\s*↔\s*\((.+?)\)\s*:= by", stmt)
             if m_tan:
                 eq1, eq2 = m_tan.groups()
@@ -744,12 +786,12 @@ def _verify_with_sympy(lean_statement: str) -> bool:
             d2_claimed = sympify(_py_expr(m_infl.group(2)), locals=loc)
             return bool(sympy.simplify(diff(diff(f, x), x) - d2_claimed) == 0)
 
-        # ── Derivative / Indefinite Integral ──────────────────────────────────
-        m = re.search(r"deriv\s*\(\s*fun\s+([xt])\s*=>\s*(.+?)\s*\)\s*\1\s*=\s*(.+?)\s*:= by", stmt)
+        # ── Derivative / Partial Derivative / Indefinite Integral ───────────────
+        m = None if "∧" in stmt else re.search(r"deriv\s*\(\s*fun\s+([xyzat])\s*=>\s*(.+?)\s*\)\s*\1\s*=\s*(.+?)\s*:= by", stmt)
         if m:
             var_sym = sympy.Symbol(m.group(1))
             loc = {
-                "sympy": sympy, "x": x, "t": symbols("t"),
+                "sympy": sympy, "x": x, "y": symbols("y"), "z": symbols("z"), "t": symbols("t"),
                 "pi": sympy.pi, "sqrt": sympy.sqrt,
                 "sin": sympy.sin, "cos": sympy.cos, "tan": sympy.tan,
                 "sec": sympy.sec, "csc": sympy.csc, "cot": sympy.cot,
@@ -759,7 +801,12 @@ def _verify_with_sympy(lean_statement: str) -> bool:
             f = sympify(_py_expr(m.group(2)), locals=loc)
             d_claimed = sympify(_py_expr(m.group(3)), locals=loc)
             diff_f = diff(f, var_sym)
-            # Fast numerical check first to prevent hanging on massive algebraic/Cardano expressions
+            try:
+                if sympy.simplify(diff_f - d_claimed) == 0:
+                    return True
+            except Exception:
+                pass
+            # Fast numerical check for univariate expressions
             verified_pts = 0
             mismatch = False
             for test_pt in [0.3, 0.5, 0.7, 0.9, 1.1, 1.3, 1.5]:
@@ -778,12 +825,6 @@ def _verify_with_sympy(lean_statement: str) -> bool:
                 return False
             if verified_pts >= 2:
                 return True
-
-            try:
-                if sympy.simplify(diff_f - d_claimed) == 0:
-                    return True
-            except Exception:
-                pass
             return False
 
         # ── Definite integral / King's rule ──────────────────────────────────
@@ -857,34 +898,119 @@ def _verify_with_sympy(lean_statement: str) -> bool:
             ok2 = bool(sympy.simplify(lhs.subs(x, r2) - rhs) == 0)
             return ok1 and ok2
 
-        # ── Quadratic with no real roots: lhs ≠ rhs ──────────────────────────
+        # ── Counterexample disproofs & no-real-root quadratics: lhs ≠ rhs ─────
         m_neq = re.search(r"(.+?)\s*≠\s*(.+)", eq_part)
         if m_neq:
-            lhs = sympify(_py_expr(m_neq.group(1)))
-            rhs = sympify(_py_expr(m_neq.group(2)))
-            diff_poly = sympy.Poly(lhs - rhs, x)
-            if diff_poly.degree() == 2:
-                a = diff_poly.coeff_monomial(x**2)
-                b = diff_poly.coeff_monomial(x**1)
-                c = diff_poly.coeff_monomial(x**0)
-                D = b**2 - 4*a*c
-                return bool(D < 0)
+            l_s = re.sub(r"\s*:\s*(?:ℝ|Real|R|ℕ|Nat|ℂ|Complex)(?=\))", "", m_neq.group(1)).strip()
+            r_s = re.sub(r"\s*:\s*(?:ℝ|Real|R|ℕ|Nat|ℂ|Complex)(?=\))", "", m_neq.group(2)).strip()
+            import math as _m
+            if l_s.startswith("Nat.") and re.fullmatch(r"\d+", r_s):
+                r_int = int(r_s)
+                m_f = re.match(r"^Nat\.factorial\s+(\d+)$", l_s)
+                if m_f:
+                    return _m.factorial(int(m_f.group(1))) != r_int
+                m_g = re.match(r"^Nat\.gcd\s+(\d+)\s+(\d+)$", l_s)
+                if m_g:
+                    return _m.gcd(int(m_g.group(1)), int(m_g.group(2))) != r_int
+                m_lc = re.match(r"^Nat\.lcm\s+(\d+)\s+(\d+)$", l_s)
+                if m_lc:
+                    return _m.lcm(int(m_lc.group(1)), int(m_lc.group(2))) != r_int
+                m_ch = re.match(r"^Nat\.choose\s+(\d+)\s+(\d+)$", l_s)
+                if m_ch:
+                    return _m.comb(int(m_ch.group(1)), int(m_ch.group(2))) != r_int
+                m_pm = re.match(r"^Nat\.descFactorial\s+(\d+)\s+(\d+)$", l_s)
+                if m_pm:
+                    return _m.perm(int(m_pm.group(1)), int(m_pm.group(2))) != r_int
+            neq_locals = {
+                "sympy": sympy,
+                "sqrt": sympy.sqrt,
+                "I": sympy.I,
+                "pi": sympy.pi,
+                "log": sympy.log,
+                "exp": sympy.exp,
+                "sin": sympy.sin,
+                "cos": sympy.cos,
+                "tan": sympy.tan,
+            }
+            lhs = sympify(_py_expr(l_s), locals=neq_locals)
+            rhs = sympify(_py_expr(r_s), locals=neq_locals)
+            diff_expr = sympy.simplify(sympy.expand(lhs - rhs))
+            if x in diff_expr.free_symbols:
+                diff_poly = sympy.Poly(lhs - rhs, x)
+                if diff_poly.degree() == 2:
+                    a = diff_poly.coeff_monomial(x**2)
+                    b = diff_poly.coeff_monomial(x**1)
+                    c = diff_poly.coeff_monomial(x**0)
+                    D = b**2 - 4*a*c
+                    return bool(D < 0)
+            if not diff_expr.free_symbols:
+                if diff_expr == 0:
+                    return False
+                try:
+                    return bool(abs(complex(diff_expr.evalf())) > 1e-9)
+                except Exception:
+                    return bool(diff_expr != 0)
 
-        # ── Linear equation solving: (ax + b = c) ↔ (x = answer) ─────────────
-        m = re.search(r"\((.+?)\s*=\s*(.+?)\)\s*↔\s*\((?:x|[a-zA-Z])\s*=\s*(.+?)\)", eq_part)
-        if m:
-            lhs = sympify(_py_expr(m.group(1)))
-            rhs = sympify(_py_expr(m.group(2)))
-            ans = sympify(_py_expr(m.group(3)))
-            return bool(lhs.subs(x, ans) == rhs)
+        # ── Linear / Exponential equation solving: (lhs = rhs) ↔ (var = ans) ──
+        eq_clean_iff = re.sub(r"\s*:\s*(?:ℝ|Real|R|ℕ|Nat|ℂ|Complex)(?=\))", "", eq_part).strip()
+        if "↔" in eq_clean_iff and "=" in eq_clean_iff:
+            iff_left, iff_right = [s.strip() for s in eq_clean_iff.split("↔", 1)]
+            def _strip_outer(s: str) -> str:
+                while s.startswith("(") and s.endswith(")"):
+                    depth = 0
+                    balanced = True
+                    for idx_c, ch_c in enumerate(s):
+                        if ch_c == "(":
+                            depth += 1
+                        elif ch_c == ")":
+                            depth -= 1
+                            if depth == 0 and idx_c < len(s) - 1:
+                                balanced = False
+                                break
+                    if balanced and depth == 0:
+                        s = s[1:-1].strip()
+                    else:
+                        break
+                return s
+            iff_l = _strip_outer(iff_left)
+            iff_r = _strip_outer(iff_right)
+            if "=" in iff_l and "=" in iff_r:
+                lhs_str, rhs_str = iff_l.split("=", 1)
+                var_part, ans_str = iff_r.split("=", 1)
+                var_tok = var_part.strip()
+                if re.fullmatch(r"[a-zA-Z]", var_tok):
+                    lhs = sympify(_py_expr(lhs_str))
+                    rhs = sympify(_py_expr(rhs_str))
+                    v_sym = symbols(var_tok)
+                    ans = sympify(_py_expr(ans_str))
+                    return bool(sympy.simplify(lhs.subs(v_sym, ans) - rhs) == 0)
 
         # ── Conjunction of equalities (A = B ∧ C = D ∧ ...) ──────────────────
         if "∧" in eq_part:
             conjuncts = eq_part.split("∧")
             all_ok = True
             for c in conjuncts:
-                c_clean = re.sub(r"\((.+?)\s*:\s*(?:ℝ|Real|R)\)", r"(\1)", c).strip()
-                if "=" in c_clean:
+                c_clean = re.sub(r"\s*:\s*(?:ℝ|Real|R)(?=\))", "", c).strip()
+                while c_clean.startswith("(") and c_clean.endswith(")"):
+                    depth = 0
+                    balanced_outer = True
+                    for idx_ch, ch in enumerate(c_clean):
+                        if ch == "(":
+                            depth += 1
+                        elif ch == ")":
+                            depth -= 1
+                            if depth == 0 and idx_ch < len(c_clean) - 1:
+                                balanced_outer = False
+                                break
+                    if balanced_outer and depth == 0:
+                        c_clean = c_clean[1:-1].strip()
+                    else:
+                        break
+                if "deriv" in c_clean:
+                    if not _verify_with_sympy(f"example (x y z : ℝ) : {c_clean} := by simp"):
+                        all_ok = False
+                        break
+                elif "=" in c_clean:
                     h0, h1 = c_clean.split("=", 1)
                     lhs = sympify(_py_expr(h0), locals={"sympy": sympy, "sqrt": sympy.sqrt})
                     rhs = sympify(_py_expr(h1), locals={"sympy": sympy, "sqrt": sympy.sqrt})
@@ -897,14 +1023,122 @@ def _verify_with_sympy(lean_statement: str) -> bool:
             if all_ok:
                 return True
 
-        # ── Generic equality: expr = answer (arithmetic / algebraic) ─────────
+        # ── Generalized Negation ¬ P / ¬ (P) ──────────────────────────────────
+        m_neg = re.match(r"^¬\s*(?:\((.+)\)|(.+))$", eq_part.strip())
+        if m_neg:
+            inner = (m_neg.group(1) or m_neg.group(2)).strip()
+            return not _verify_with_sympy(f"example : {inner} := by norm_num")
+
+        # ── Generalized Divisibility: (a : ℕ) ∣ b ─────────────────────────────
+        m_div = re.match(r"^\(?(\d+)(?:\s*:\s*ℕ)?\)?\s*∣\s*\(?(\d+)(?:\s*:\s*ℕ)?\)?$", eq_part.strip())
+        if m_div:
+            a_i, b_i = int(m_div.group(1)), int(m_div.group(2))
+            return a_i != 0 and (b_i % a_i == 0)
+
+        # ── Generalized Modulo: (a : ℕ) % m = r ──────────────────────────────
+        m_mod = re.match(r"^\(?(\d+)(?:\s*:\s*ℕ)?\)?\s*%\s*(\d+)\s*=\s*(\d+)$", eq_part.strip())
+        if m_mod:
+            a_i, m_i, r_i = int(m_mod.group(1)), int(m_mod.group(2)), int(m_mod.group(3))
+            return m_i > 0 and (a_i % m_i == r_i)
+
+        # ── Generalized Nat.gcd / Nat.choose / Finset.Icc sum ─────────────────
+        m_gcd = re.match(r"^Nat\.gcd\s+(\d+)\s+(\d+)\s*=\s*(\d+)$", eq_part.strip())
+        if m_gcd:
+            import math
+            return math.gcd(int(m_gcd.group(1)), int(m_gcd.group(2))) == int(m_gcd.group(3))
+
+        m_ch = re.match(r"^Nat\.choose\s+(\d+)\s+(\d+)\s*=\s*(\d+)$", eq_part.strip())
+        if m_ch:
+            import math
+            return math.comb(int(m_ch.group(1)), int(m_ch.group(2))) == int(m_ch.group(3))
+
+        m_fact = re.match(r"^Nat\.factorial\s+(\d+)\s*=\s*(\d+)$", eq_part.strip())
+        if m_fact:
+            import math
+            return math.factorial(int(m_fact.group(1))) == int(m_fact.group(2))
+
+        m_perm = re.match(r"^Nat\.descFactorial\s+(\d+)\s+(\d+)\s*=\s*(\d+)$", eq_part.strip())
+        if m_perm:
+            import math
+            return math.perm(int(m_perm.group(1)), int(m_perm.group(2))) == int(m_perm.group(3))
+
+        m_lcm = re.match(r"^Nat\.lcm\s+(\d+)\s+(\d+)\s*=\s*(\d+)$", eq_part.strip())
+        if m_lcm:
+            import math
+            return math.lcm(int(m_lcm.group(1)), int(m_lcm.group(2))) == int(m_lcm.group(3))
+
+        m_fsum = re.match(r"^\(?\s*∑\s+k\s+∈\s+Finset\.Icc\s+(\d+)\s+(\d+),\s*(k(?:\s*\^\s*2)?)\s*\)?\s*=\s*(\d+)$", eq_part.strip())
+        if m_fsum:
+            lo, hi, body_k, tot = int(m_fsum.group(1)), int(m_fsum.group(2)), m_fsum.group(3), int(m_fsum.group(4))
+            return sum((k_i ** 2 if "^" in body_k else k_i) for k_i in range(lo, hi + 1)) == tot
+
+        # ── Generalized Inequalities (<, >, ≤, ≥) ─────────────────────────────
+        m_ineq = re.match(r"^(.+?)\s*(<=|>=|≤|≥|<|>)\s*(.+)$", eq_part.strip())
+        if m_ineq and "=" not in eq_part.replace("<=", "").replace(">=", ""):
+            l_clean = re.sub(r"\s*:\s*(?:ℝ|Real|R|ℕ|Nat)(?=\))", "", m_ineq.group(1)).strip()
+            r_clean = re.sub(r"\s*:\s*(?:ℝ|Real|R|ℕ|Nat)(?=\))", "", m_ineq.group(3)).strip()
+            lv = sympify(_py_expr(l_clean), locals={"sympy": sympy, "sqrt": sympy.sqrt})
+            rv = sympify(_py_expr(r_clean), locals={"sympy": sympy, "sqrt": sympy.sqrt})
+            op = m_ineq.group(2)
+            free_syms = sorted(lv.free_symbols | rv.free_symbols, key=str)
+            if not free_syms:
+                if op == "<":
+                    return bool(lv < rv)
+                if op == ">":
+                    return bool(lv > rv)
+                if op in ("<=", "≤"):
+                    return bool(lv <= rv)
+                if op in (">=", "≥"):
+                    return bool(lv >= rv)
+            else:
+                # Sample grid + check difference polynomial / SOS
+                diff_e = sympy.expand(lv - rv)
+                pts = [-3, -1, 0, 1, 2, 3]
+                import itertools
+                for combo in itertools.product(pts, repeat=min(len(free_syms), 3)):
+                    subs_map = dict(zip(free_syms, combo))
+                    val = float(diff_e.subs(subs_map).evalf())
+                    if op == ">" and not (val > 0):
+                        return False
+                    if op in (">=", "≥") and not (val >= 0):
+                        return False
+                    if op == "<" and not (val < 0):
+                        return False
+                    if op in ("<=", "≤") and not (val <= 0):
+                        return False
+                # Verify algebraic non-negativity for 1-var / 2-var quadratics via discriminant or SOS
+                if len(free_syms) == 1:
+                    poly = sympy.Poly(diff_e if op in (">", ">=", "≥") else -diff_e, free_syms[0])
+                    if poly.degree() == 2:
+                        a_c, b_c, c_c = poly.all_coeffs()
+                        disc = b_c**2 - 4*a_c*c_c
+                        return bool(a_c > 0 and (disc < 0 if op in (">", "<") else disc <= 0))
+                if len(free_syms) == 2 and sympy.total_degree(diff_e) == 2:
+                    # Check quadratic form x^2 + y^2 - 2xy etc. via Hessian PSD
+                    H = sympy.hessian(diff_e if op in (">=", "≥") else -diff_e, free_syms)
+                    if all(e >= 0 for e in H.eigenvals()):
+                        return True
+                return False
+
+        # ── Generic equality: expr = answer (arithmetic / algebraic / complex / log) ──
         if "=" in eq_part:
-            eq_clean = re.sub(r"\((.+?)\s*:\s*(?:ℝ|Real|R)\)", r"(\1)", eq_part).strip()
+            eq_clean = re.sub(r"\s*:\s*(?:ℝ|Real|R|ℕ|Nat|ℂ|Complex)(?=\))", "", eq_part).strip()
             if "=" in eq_clean:
+                pos_vars = set(re.findall(r"\(\s*[a-zA-Z_]\w*\s*:\s*0\s*<\s*([a-zA-Z])\s*\)", body))
+                sym_locals = {
+                    "sympy": sympy,
+                    "sqrt": sympy.sqrt,
+                    "I": sympy.I,
+                    "pi": sympy.pi,
+                    "log": sympy.log,
+                    "exp": sympy.exp,
+                }
+                for pv in pos_vars:
+                    sym_locals[pv] = sympy.Symbol(pv, positive=True)
                 halves = eq_clean.split("=", 1)
-                lhs = sympify(_py_expr(halves[0]), locals={"sympy": sympy, "sqrt": sympy.sqrt})
-                rhs = sympify(_py_expr(halves[1]), locals={"sympy": sympy, "sqrt": sympy.sqrt})
-                return bool(sympy.simplify(lhs - rhs) == 0)
+                lhs = sympify(_py_expr(halves[0]), locals=sym_locals)
+                rhs = sympify(_py_expr(halves[1]), locals=sym_locals)
+                return bool(sympy.simplify(sympy.expand(lhs - rhs)) == 0)
 
         return False
 

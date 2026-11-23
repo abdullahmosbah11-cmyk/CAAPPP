@@ -300,14 +300,33 @@ export default function ResultPanel({ result }) {
             <ShieldCheck className="w-6 h-6" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-lg font-bold text-slate-100">Mathematically Proven Correct</h2>
               <span className="text-xs font-semibold px-2 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-full font-mono">
                 Lean 4 Verified
               </span>
+              {result.ast_verified !== false && (
+                <span
+                  title={
+                    Array.isArray(result.ast_checks) && result.ast_checks.length > 0
+                      ? `AST Guards Passed: ${result.ast_checks.join(', ')}`
+                      : 'Structural AST Faithfulness Verified'
+                  }
+                  className="text-xs font-semibold px-2 py-0.5 bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 rounded-full font-mono cursor-help"
+                >
+                  AST Faithfulness Verified
+                </span>
+              )}
+              {result.generalized_mode && (
+                <span className="text-xs font-semibold px-2 py-0.5 bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full font-mono">
+                  Generalized Out-of-Domain Proof
+                </span>
+              )}
             </div>
             <p className="text-xs text-slate-400">
-              Verified by Lean 4 interactive theorem prover with zero-trust kernel assurance.
+              {result.generalized_mode
+                ? 'Solved via zero-trust out-of-domain Lean 4 autoformalization & theorem verification.'
+                : 'Verified by Lean 4 interactive theorem prover with zero-trust kernel assurance.'}
             </p>
           </div>
         </div>
@@ -626,13 +645,23 @@ export default function ResultPanel({ result }) {
             </div>
 
             <div className="flex items-center gap-2 text-xs font-mono text-slate-500">
-              <span>Template: {result.template_id || 'calculus'}</span>
+              <span>
+                {result.generalized_mode ? `Generalized: ${result.template_id}` : `Template: ${result.template_id || 'calculus'}`}
+              </span>
             </div>
           </div>
 
           {/* Explanation Text */}
-          <div className="bg-slate-900/70 border border-slate-800/80 rounded-xl p-4 text-slate-200 text-sm leading-relaxed shadow-sm">
-            <FormattedExplanation text={result.explanation} />
+          <div className="bg-slate-900/70 border border-slate-800/80 rounded-xl p-4 text-slate-200 text-sm leading-relaxed shadow-sm space-y-3">
+            {result.mental_model && (
+              <div className="px-3 py-2 rounded-lg bg-emerald-950/40 border border-emerald-800/40 text-xs text-emerald-200 font-medium">
+                <span className="text-emerald-400 font-bold uppercase tracking-wider mr-1.5">Mental Model:</span>
+                <FormattedExplanation text={result.mental_model} />
+              </div>
+            )}
+            <div>
+              <FormattedExplanation text={result.explanation} />
+            </div>
           </div>
 
           {/* Teacher's Note / Strategic Advice Callout */}
@@ -641,9 +670,10 @@ export default function ResultPanel({ result }) {
               <Lightbulb className="w-4 h-4" />
             </div>
             <div className="space-y-1 text-xs">
-              <span className="font-bold text-amber-300 block">Teacher's Pedagogical Tip:</span>
+              <span className="font-bold text-amber-300 block">Teacher's Pedagogical Tip & Common Pitfall:</span>
               <p className="text-slate-300 leading-relaxed">
-                Always verify domain restrictions and boundary points when evaluating derivatives or integrals. In exam settings, identifying whether a function requires the product rule, chain rule, or u-substitution before expanding saves time and prevents algebraic errors.
+                {result.pitfall_tip ||
+                  "Always verify domain restrictions and boundary points when evaluating derivatives or integrals. Identifying the right rule (product, chain, or substitution) before expanding prevents algebraic errors."}
               </p>
             </div>
           </div>

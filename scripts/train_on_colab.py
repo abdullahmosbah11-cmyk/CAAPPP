@@ -58,7 +58,7 @@ model = FastLanguageModel.get_peft_model(
     model,
     r=16, # Rank
     target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-    lora_alpha=16,
+    lora_alpha=32,
     lora_dropout=0, # Optimized 0 dropout for Unsloth
     bias="none",
     use_gradient_checkpointing="unsloth",
@@ -93,14 +93,14 @@ trainer = SFTTrainer(
         per_device_train_batch_size=2,
         gradient_accumulation_steps=4,
         warmup_steps=10,
-        max_steps=120, # ~2 epochs on 1,000 samples
+        num_train_epochs=2,
         learning_rate=2e-4,
         fp16=not torch.cuda.is_bf16_supported(),
         bf16=torch.cuda.is_bf16_supported(),
         logging_steps=10,
         optim="adamw_8bit",
         weight_decay=0.01,
-        lr_scheduler_type="linear",
+        lr_scheduler_type="cosine",
         seed=42,
         output_dir="outputs",
     ),
@@ -134,11 +134,11 @@ for label, prob in [("INCOMPLETE TEST", test_problem_incomplete), ("COMPLETE TES
     outputs = model.generate(input_ids=inputs, max_new_tokens=256, use_cache=True)
     decoded = tokenizer.batch_decode(outputs)
     print(f"\n--- {label} ---")
-    print(decoded[0].split("<|assistant|>")[-1].replace("<|end|>", "").strip())
+    print(decoded[0].split("<|im_start|>assistant")[-1].replace("<|im_end|>", "").strip())
 
 # ------------------------------------------------------------------------------
 # 6. Save and Export to GGUF Format for VeriMath
 # ------------------------------------------------------------------------------
 # This generates a quantized GGUF file that you can directly drop into verimath/models/
-model.save_pretrained_gguf("phi3_verimath_model", tokenizer, quantization_method="q4_k_m")
-print("\nSuccess! Download 'phi3_verimath_model-q4_k_m.gguf' and place it in your 'verimath/models/' directory.")
+model.save_pretrained_gguf("qwen2_5_1_5b_verimath_pi4", tokenizer, quantization_method="q4_k_m")
+print("\nSuccess! Download 'qwen2_5_1_5b_verimath_pi4-q4_k_m.gguf' and place it in your 'models/' directory.")

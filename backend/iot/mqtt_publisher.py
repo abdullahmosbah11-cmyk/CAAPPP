@@ -104,7 +104,14 @@ def _get_client() -> Optional[Any]:
         return _client
 
     try:
-        _client = mqtt.Client(client_id="verimath-backend", protocol=mqtt.MQTTv311)
+        if hasattr(mqtt, "CallbackAPIVersion"):
+            _client = mqtt.Client(
+                callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
+                client_id="verimath-backend",
+                protocol=mqtt.MQTTv311,
+            )
+        else:
+            _client = mqtt.Client(client_id="verimath-backend", protocol=mqtt.MQTTv311)
         _client.on_connect = _on_connect
         _client.on_disconnect = _on_disconnect
 
@@ -118,20 +125,20 @@ def _get_client() -> Optional[Any]:
     return _client
 
 
-def _on_connect(client, userdata, flags, rc):
+def _on_connect(client, userdata, flags, reason_code, properties=None):
     global _connected
-    if rc == 0:
+    if reason_code == 0:
         _connected = True
         logger.info("MQTT broker connected (rc=0)")
     else:
         _connected = False
-        logger.warning(f"MQTT connection failed with code {rc}")
+        logger.warning(f"MQTT connection failed with code {reason_code}")
 
 
-def _on_disconnect(client, userdata, rc):
+def _on_disconnect(client, userdata, disconnect_flags, reason_code=0, properties=None):
     global _connected
     _connected = False
-    logger.warning(f"MQTT disconnected (rc={rc})")
+    logger.warning(f"MQTT disconnected (rc={reason_code})")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

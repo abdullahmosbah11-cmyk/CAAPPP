@@ -4,18 +4,21 @@ import StatusIndicator from '../components/StatusIndicator';
 import ResultPanel from '../components/ResultPanel';
 import LeanStatement from '../components/LeanStatement';
 import RejectionPanel from '../components/RejectionPanel';
-import { ShieldCheck, Cpu, Terminal } from 'lucide-react';
+import StepGraderPanel from '../components/StepGraderPanel';
+import { ShieldCheck, Cpu, Terminal, ListChecks } from 'lucide-react';
 
 export default function StudentView({ apiBaseUrl }) {
+  const [activeTab, setActiveTab] = useState('solve');
   const [problem, setProblem] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [currentStage, setCurrentStage] = useState(0);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e, overrideProblem = null) => {
     if (e) e.preventDefault();
-    if (!problem.trim() || isLoading) return;
+    const targetProblem = typeof overrideProblem === 'string' ? overrideProblem : problem;
+    if (!targetProblem.trim() || isLoading) return;
 
     setIsLoading(true);
     setResult(null);
@@ -27,7 +30,7 @@ export default function StudentView({ apiBaseUrl }) {
       setCurrentStage((prev) => (prev < 4 ? prev + 1 : prev));
     }, 600);
 
-    const cleanedProblem = problem.replace(/\s+/g, ' ').trim();
+    const cleanedProblem = targetProblem.replace(/\s+/g, ' ').trim();
 
     try {
       const response = await fetch(`${apiBaseUrl}/solve`, {
@@ -78,40 +81,75 @@ export default function StudentView({ apiBaseUrl }) {
             <span>Raspberry Pi 4 • Local Kernel</span>
           </div>
         </div>
+
+        {/* Mode Switcher Tabs */}
+        <div className="flex items-center gap-2 mt-5 pt-4 border-t border-slate-800/80">
+          <button
+            type="button"
+            onClick={() => setActiveTab('solve')}
+            className={`px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 transition-colors ${
+              activeTab === 'solve'
+                ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-950/40'
+                : 'bg-slate-950/60 text-slate-400 hover:text-slate-200 border border-slate-800'
+            }`}
+          >
+            <ShieldCheck className="w-4 h-4" />
+            Solve &amp; Prove
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('steps')}
+            className={`px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 transition-colors ${
+              activeTab === 'steps'
+                ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-950/40'
+                : 'bg-slate-950/60 text-slate-400 hover:text-slate-200 border border-slate-800'
+            }`}
+          >
+            <ListChecks className="w-4 h-4" />
+            Check My Steps
+          </button>
+        </div>
       </div>
 
-      {/* Input */}
-      <ProblemInput
-        problem={problem}
-        setProblem={setProblem}
-        onSubmit={handleSubmit}
-        isLoading={isLoading}
-      />
-
-      {/* Pipeline Status Indicator */}
-      <StatusIndicator isLoading={isLoading} currentStage={currentStage} />
-
-      {/* Error state */}
-      {error && (
-        <div className="bg-rose-950/40 border border-rose-800 rounded-2xl p-5 text-rose-300 text-sm font-mono">
-          ⚠️ {error.toLowerCase().includes('server') || error.toLowerCase().includes('http') ? error : `Connection error: ${error}`}
-        </div>
-      )}
-
-      {/* Results */}
-      {result && result.status === 'VERIFIED' && (
+      {activeTab === 'steps' ? (
+        <StepGraderPanel apiBaseUrl={apiBaseUrl} initialProblem={problem} />
+      ) : (
         <>
-          <ResultPanel result={result} />
-          <LeanStatement
-            statement={result.lean_statement}
-            templateId={result.template_id}
+          {/* Input */}
+          <ProblemInput
+            apiBaseUrl={apiBaseUrl}
+            problem={problem}
+            setProblem={setProblem}
+            onSubmit={handleSubmit}
+            isLoading={isLoading}
           />
-        </>
-      )}
 
-      {/* Rejections & Unsupporteds */}
-      {result && result.status !== 'VERIFIED' && (
-        <RejectionPanel result={result} />
+          {/* Pipeline Status Indicator */}
+          <StatusIndicator isLoading={isLoading} currentStage={currentStage} />
+
+          {/* Error state */}
+          {error && (
+            <div className="bg-rose-950/40 border border-rose-800 rounded-2xl p-5 text-rose-300 text-sm font-mono">
+              ⚠️ {error.toLowerCase().includes('server') || error.toLowerCase().includes('http') ? error : `Connection error: ${error}`}
+            </div>
+          )}
+
+          {/* Results */}
+          {result && result.status === 'VERIFIED' && (
+            <>
+              <ResultPanel result={result} />
+              <LeanStatement
+                statement={result.lean_statement}
+                templateId={result.template_id}
+              />
+            </>
+          )}
+
+          {/* Rejections & Unsupporteds */}
+          {result && result.status !== 'VERIFIED' && (
+            <RejectionPanel result={result} />
+          )}
+        </>
       )}
     </div>
   );

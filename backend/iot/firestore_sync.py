@@ -82,13 +82,14 @@ def _init_firebase():
 # MQTT callbacks
 # ─────────────────────────────────────────────────────────────────────────────
 
-def on_connect(client, userdata, flags, rc):
+def on_connect(client, userdata, flags, reason_code, properties=None):
+    rc = getattr(reason_code, "value", reason_code)
     if rc == 0:
         logger.info(f"Connected to MQTT broker at {BROKER_HOST}:{BROKER_PORT}")
         client.subscribe(TOPIC, qos=1)
         logger.info(f"Subscribed to topic: {TOPIC}")
     else:
-        logger.error(f"MQTT connection failed with code {rc}")
+        logger.error(f"MQTT connection failed with code {reason_code}")
 
 
 def on_message(client, userdata, msg):
@@ -114,8 +115,8 @@ def on_message(client, userdata, msg):
         logger.error(f"Firestore write failed: {e}")
 
 
-def on_disconnect(client, userdata, rc):
-    logger.warning(f"Disconnected from MQTT broker (rc={rc}). Will reconnect...")
+def on_disconnect(client, userdata, disconnect_flags, reason_code, properties=None):
+    logger.warning(f"Disconnected from MQTT broker (rc={reason_code}). Will reconnect...")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -126,7 +127,11 @@ def main():
     logger.info("VeriMath Firestore Sync Service starting...")
     _init_firebase()  # Pre-initialize (fail-safe)
 
-    client = mqtt.Client(client_id="verimath-firestore-sync", protocol=mqtt.MQTTv311)
+    client = mqtt.Client(
+        mqtt.CallbackAPIVersion.VERSION2,
+        client_id="verimath-firestore-sync",
+        protocol=mqtt.MQTTv311,
+    )
     client.on_connect = on_connect
     client.on_message = on_message
     client.on_disconnect = on_disconnect

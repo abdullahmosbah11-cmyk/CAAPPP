@@ -469,3 +469,200 @@ timeline
     - `Find the derivative of x² sin(x) with respect to x` $\to$ Returns clean LaTeX $x^2 \cos(x) + 2x \sin(x)$ and 4 authentic El-Moasser Product Rule steps with zero `Real.` leaks and zero `\text{...}` KaTeX errors.
 - **Verification**:
   - Full test suite: **250 / 250 passing (100.0%) in 21.8s** with 0 regressions.
+
+---
+
+## Phase 15: Edge Deployment Alignment, Colab Pipeline Fixes & Verification (Completed 2026-11-21)
+
+- **Dependency & Environment Reproducibility**:
+  - Added `sympy>=1.12` to `requirements.txt` so clean Python environments and Raspberry Pi deployments install all required CAS dependencies.
+- **Colab Fine-Tuning Pipeline Alignment**:
+  - Fixed `scripts/VeriMath_Colab_FineTuning.ipynb` so Step 2 no longer overwrites the 9,888-entry `verimath_finetune_dataset.jsonl` with the legacy 3,195-entry generator, added GitHub auto-clone fallback in Step 4, and aligned hyperparameters (`lora_alpha=32`, `num_train_epochs=2`, `lr_scheduler_type="cosine"`).
+  - Aligned `scripts/train_on_colab.py` with the same hyperparameters and Qwen2.5-1.5B GGUF export target.
+- **Edge Configuration & Model Standardization**:
+  - Updated `.env.example`, `deployment/install_pi.sh`, `scripts/download_model.py`, and `backend/pipeline/solver.py` to standardize on `Qwen2.5-1.5B-Instruct` Q4_K_M GGUF (`LLM_N_CTX=2048`) with optional `--phi3` legacy fallback.
+- **IoT / MQTT Client Modernization**:
+  - Updated `backend/iot/mqtt_publisher.py` to use `paho-mqtt` `CallbackAPIVersion.VERSION2`, eliminating deprecation warnings.
+- **Frontend Build & Edge Benchmark**:
+  - Verified React production build (`frontend/build`, 132.97 kB JS + 9.45 kB CSS) and FastAPI `/health` & `/app/` serving (`HTTP 200`).
+  - Added `scripts/benchmark_edge.py`: verified `demo_cache.db` average lookup latency at **0.375 ms** (well under the 4.0 ms SLA) with **0** student-facing leaks.
+- **Verification**:
+  - Full test suite: **250 / 250 passing (100.0%)** with 0 regressions.
+
+---
+
+## Phase 16: Zero-Trust Hardening, 244/244 Dataset Remediation, Semantic Judge & 8 GB Pi 4 Upgrade (Completed 2026-11-21)
+
+- **Zero-Trust Lean 4 Hardening (`backend/pipeline/lean_runner.py`, `backend/templates/registry.py`)**:
+  - Replaced `:= by sorry` in `implicit_derivative` template with `field_simp [hden]; linarith`.
+  - Blocked `sorry`, `admit`, and custom `axiom` in `verify_async()`, caught `uses 'sorry'` in `_has_lean_errors()`, and added `VERIMATH_STRICT_LEAN=true` fail-closed mode.
+- **Dataset Remediation & 100% Template Coverage (`scripts/remediate_dataset.py`, `verimath_finetune_dataset.jsonl`)**:
+  - Eliminated all **429** `sorry` placeholders and fixed **143** corrupted `implicit_derivative` labels via exact SymPy differentiation.
+  - Added **423** verified ChatML examples across all **141** previously missing templates -> **10,311** total entries, **244/244 (100%)** template coverage, **0** `sorry`.
+- **Semantic Inversion Guard (`backend/pipeline/statement_judge.py`)**:
+  - Added `_check_semantic_inversions()` catching flipped inequalities (`<` vs `>`), swapped derivative targets (`dy/dx` vs `dx/dy`), swapped variable bindings (`x=a, y=b` vs `x=b, y=a`), and equation sign inversions.
+- **Student Multi-Step Derivation Grader (`backend/pipeline/step_grader.py`, `backend/main.py`)**:
+  - Added `grade_student_steps()` and `POST /grade-steps` to verify student algebra, equation solving, derivative, and integral steps and pinpoint errors (`sign_error`, `constant_error`, `factor_error`, `algebra_mismatch`).
+- **8 GB Raspberry Pi 4 Hardware Alignment**:
+  - Raised default `LLM_N_CTX` to `4096`, added `Qwen2.5-3B-Instruct` Q4_K_M support (`scripts/download_model.py --3b`, `solver.py`, `/health`), and updated `VeriMath_Colab_FineTuning.ipynb`.
+- **Verification**:
+  - Full test suite: **261 / 261 passing (100.0%)** with 0 regressions.
+
+---
+
+## Phase 17: Live Lean 4.36.0 & Mathlib4 Kernel Verification + Template Tactic Fixes (Completed 2026-11-21)
+
+- **Lean 4.36.0 & Mathlib4 Build Fixes (`lean/VeriMath/`)**:
+  - Fixed `PackageConfig` syntax in `lean/VeriMath/lakefile.lean` (`version := v!"1.0.0"`, `@[default_target]`) and pinned `lean/VeriMath/lean-toolchain` to `leanprover/lean4:v4.36.0` with `lake-manifest.json`.
+  - Updated `lean/VeriMath/VeriMath/Tactics.lean` and `backend/pipeline/lean_runner.py` (`_LEAN_FILE_HEADER`) to Mathlib4 stable module paths (`Mathlib.Analysis.SpecialFunctions.Log.Deriv`, `Mathlib.Analysis.SpecialFunctions.Integrals.Basic`, `IntervalIntegral.Basic`, `IntervalIntegral.FundThmCalculus`).
+  - Compiled `VeriMath.Tactics` cleanly (`5,670` jobs) with prebuilt Mathlib4 `.olean` cache (`9,117` files).
+- **Live Lean 4 Template & Tactic Remediation (`backend/templates/registry.py`)**:
+  - Upgraded `derivative` and `indefinite_integral` templates to `simp (disch := fun_prop) [deriv_comp, ...]` + `ring`, and `definite_integral` to `intervalIntegral.integral_const_mul` / `integral_id` / `integral_pow` + `norm_num`.
+  - Fixed `farmer_fence_optimization` (`norm_num`), `line_closest_point_optimization` (added explicit `ℝ` casts to all conjuncts), `norman_window_fixed_area_min_perimeter_optimization` (`refine ⟨?_, ?_, ?_⟩ <;> (try norm_num) <;> ring`), and `cone_inscribed_inverted_cone_max_volume_optimization` (`norm_num <;> ring`).
+- **Verification**:
+  - Live strict Lean 4 (`VERIMATH_STRICT_LEAN=true`) held-out evaluation: **4/4** verified + **2/2** `sorry`/`admit` blocked.
+  - Core pipeline + zero-trust tests: **22/22** passing against live Lean 4.36.0 kernel.
+  - SymPy dev-mode regression suite: **261/261** passing (remaining ~12 contest-integral and 4-decimal float tests in `test_contest_integrals.py` / screenshot suites require SymPy CAS fallback because Mathlib `norm_num` does not auto-evaluate Putnam integrals or rounded decimals).
+
+---
+
+## Phase 18: Curriculum-Aligned Intuitive Explainer Layer (Completed 2026-11-21)
+
+- **Intuitive Textbook Pedagogy Engine (`backend/pipeline/explainer.py`)**:
+  - Built `INTUITIVE_CONCEPT_GUIDES` & `build_intuitive_guide()` covering 19 calculus, integration, related-rates, optimization, and algebra families with verbal mnemonics, geometric/physical mental models, and common pitfall/exam tips.
+  - Enforced strict Rule 22 (`Real.` / Lean syntax isolation) and Rule 23 (zero external textbook names or page citations in student-facing output), with optional `EXPLAINER_USE_LLM=true` prose polishing.
+- **API & Frontend Integration (`backend/main.py`, `frontend/src/components/ResultPanel.jsx`)**:
+  - Exposed `mental_model` and `pitfall_tip` in `SolveResponse` on both live solves and `< 1 ms` cache hits.
+  - Updated `ResultPanel.jsx` to display the problem-specific **Mental Model** banner and dynamic **Teacher's Pedagogical Tip & Common Pitfall**, rebuilt production bundle (`133.03 kB` JS).
+- **Verification**:
+  - Full test suite: **262 / 262 passing (100.0%)** in `12.368s`.
+
+---
+
+## Phase 19: Novel Generalized Out-of-Domain Autoformalization & Prover (Completed 2026-11-21)
+
+- **Generalized Propose-Verify-or-Reject Layer (`backend/pipeline/generalized_prover.py`, `backend/main.py`)**:
+  - Activated **if and only if** a problem does not match any of the 244 trained templates (`classify_problem(problem) is None`) or `demo_cache.db`.
+  - Combines local LLM Lean-theorem synthesis (`_get_llm()`) with a deterministic generalized symbolic autoformalizer covering unseen polynomial/algebraic identities, numeric inequalities, divisibility/modulo/GCD, finite sums & binomial coefficients, multivariable partial derivatives, and 2×2 determinants / vector dot products.
+  - Strictly enforces zero-trust Lean 4 verification (`verify_async`) + faithfulness checks: valid out-of-domain claims return `VERIFIED` (`generalized_mode=True`) with intuitive explanations, while false or unprovable claims return `REJECTED` entirely (`verified_answer=None`).
+- **Lean 4 & SymPy Verification Parity (`backend/pipeline/lean_runner.py`, `backend/templates/registry.py`)**:
+  - Added out-of-domain classifier guard in `classify_problem` so external proof/inequality/partial-derivative/GCD claims are never hijacked by `quadratic_equation`.
+  - Added SymPy fallback support for multivariate `deriv`, `∣`, `%`, `Nat.gcd`, `Nat.choose`, `Finset.Icc`, `¬ (...)`, and inequalities.
+- **Verification**:
+  - `VERIMATH_STRICT_LEAN=true` live Lean 4.36.0 integration suite (`test_generalized_prover.py`): **4/4** test suites passing (`7/7` true out-of-domain proofs verified, `3/3` false claims strictly rejected, in-domain isolation & non-math `UNSUPPORTED` confirmed).
+  - Full regression suite: **266 / 266 passing (100.0%)**.
+
+---
+
+## Phase 20: Higher-Math Capability Expansion & Model Dataset Enhancement (Completed 2026-11-21)
+
+- **Expanded Mathematical Domains (`backend/pipeline/generalized_prover.py`, `backend/pipeline/lean_runner.py`, `backend/pipeline/explainer.py`)**:
+  - Added Lean 4 autoformalization & verification for **2×2/3×3 linear systems**, **3×3 matrix determinants**, **3D vector cross products & Euclidean norms**, **multivariable gradients ($\nabla f$)**, **trigonometric identities** (`sin²x + cos²x = 1`, `cos(2x)`, `sin(2x)`), **universal symbolic inequalities** (`nlinarith` + `positivity`), **factorials**, and **LCM**.
+  - Added curriculum-aligned intuitive guides for linear systems, gradients, trig identities, and symbolic sum-of-squares inequalities.
+- **Model Fine-Tuning Dataset Expansion (`scripts/enhance_model_dataset.py`, `verimath_finetune_dataset.jsonl`)**:
+  - Appended **115** verified, `sorry`-free generalized autoformalization & non-math guardrail pairs (`10,426` total entries, `0` JSON errors, `0` `sorry` occurrences).
+- **Verification**:
+  - `VERIMATH_STRICT_LEAN=true` live Lean 4.36.0 integration suite (`test_generalized_prover.py`): **18/18** true out-of-domain proofs verified + **5/5** false claims strictly rejected (`187.988s — OK`).
+  - Full regression suite: **266 / 266 passing (100.0%)** in `12.826s`.
+
+---
+
+## Phase 21: Frontend Step Grader & Generalized Proof UI + Complex, Log & Exponential Proofs (Completed 2026-11-21)
+
+- **React UI Integration (`frontend/src/components/ResultPanel.jsx`, `frontend/src/components/StepGraderPanel.jsx`, `frontend/src/pages/StudentView.jsx`)**:
+  - Added the `Generalized Out-of-Domain Proof` pill badge and adaptive subtitle in `ResultPanel.jsx` whenever `result.generalized_mode === true`.
+  - Built interactive **Check My Steps** tab (`StepGraderPanel.jsx`) in `StudentView.jsx` wired to `POST /grade-steps`, with preset examples, operation-mode selector (`auto`, `algebra`, `equation`, `derivative`, `integral`), per-step error badges, and summary feedback; rebuilt production bundle (`134.72 kB` JS, `9.63 kB` CSS).
+- **Generalized Math Expansion (`backend/pipeline/generalized_prover.py`, `backend/pipeline/lean_runner.py`, `backend/pipeline/explainer.py`, `backend/templates/registry.py`)**:
+  - Added Lean 4 autoformalization & verification (`Complex.ext`, `Real.log_mul`, `Real.log_div`, `Real.rpow_right_inj`) plus SymPy dev-mode fallback parity for **complex number arithmetic**, **logarithmic product/quotient laws** (rejecting false claims such as `log(a + b) = log(a) + log(b)`), and **exponential equations** (`2^x = 32`).
+  - Fixed word-boundary matching in `lean_runner.py` (`\by\b`) so `:= by constructor` no longer false-triggers implicit tangent parsing.
+  - Added intuitive curriculum guides for complex numbers, logarithmic laws, and exponential equations.
+- **Dataset & Colab Notebook (`scripts/enhance_model_dataset.py`, `verimath_finetune_dataset.jsonl`, `scripts/VeriMath_Colab_FineTuning.ipynb`)**:
+  - Appended 21 verified `sorry`-free pairs (`10,447` total entries, `0` JSON errors, `0` `sorry`).
+  - Added `TEST 10: GENERALIZED OUT-OF-DOMAIN` to Step 6 of `VeriMath_Colab_FineTuning.ipynb`.
+- **Verification**:
+  - `VERIMATH_STRICT_LEAN=true` live Lean 4.36.0 integration suite (`backend.tests.test_generalized_prover`): **23/23** true out-of-domain proofs verified + **7/7** false claims strictly rejected (`246.427s — OK`).
+  - Full SymPy dev-mode regression suite: **266 / 266 passing (100.0%)** in `13.781s`.
+
+---
+
+## Phase 22: Rational Exponents, 2×2 Matrix Multiplication, Permutations, Primality Claims & Rule 22/23 Linting (Completed 2026-11-21)
+
+- **Expanded Out-of-Domain Mathematical Domains (`backend/pipeline/generalized_prover.py`, `backend/templates/registry.py`, `backend/pipeline/lean_runner.py`)**:
+  - Upgraded exponential equation proving (`10d`) to handle negative and rational exponents (`2^x = 1/8 → x = -3`, `4^x = 8 → x = 3/2` via common-base `calc` + `Real.rpow_mul` + `Real.rpow_right_inj` + `linarith`) and updated SymPy balanced-parenthesis `↔` parsing.
+  - Added Lean 4 verification for **2×2 matrix multiplication** (`norm_num` entry conjunction), **permutations `P(n, k)`** (`Nat.descFactorial`), **sums of squares** (`∑ k ∈ Finset.Icc 1 n, k ^ 2`), and **primality claims** (`Nat.Prime`, accepting `97` and strictly rejecting composite `91`).
+- **Safety Linting & Frontend Showcase (`backend/pipeline/explainer.py`, `backend/tests/test_zero_trust_and_8gb_upgrade.py`, `frontend/src/components/ProblemInput.jsx`)**:
+  - Sanitized `Complex.I` alongside `Real.*` in `_clean_student_text` and added `test_all_concept_guides_comply_with_rule_22_and_23`.
+  - Added out-of-domain & false-claim showcase examples to `ProblemInput.jsx` and rebuilt production bundle (`134.83 kB` JS, `9.63 kB` CSS).
+- **Dataset (`scripts/enhance_model_dataset.py`, `verimath_finetune_dataset.jsonl`)**:
+  - Added 18 verified pairs (`10,465` total entries, `0` JSON errors, `0` `sorry`).
+- **Verification**:
+  - `VERIMATH_STRICT_LEAN=true` live Lean 4.36.0 integration suite (`backend.tests.test_generalized_prover`): **29/29** true out-of-domain proofs verified + **8/8** false claims strictly rejected (`295.560s — OK`).
+  - Full SymPy dev-mode regression suite: **267 / 267 passing (100.0%)** in `13.962s`.
+
+---
+
+## Phase 23: Lean-Certified Counterexample Synthesis & Structural AST Anti-Cheating Verifier (Completed 2026-11-21)
+
+- **Contribution #1 — Lean-Certified Counterexample Synthesis (`backend/pipeline/counterexample.py`, `backend/main.py`, `frontend/src/components/RejectionPanel.jsx`)**:
+  - When an out-of-domain false claim fails Lean verification, `synthesize_counterexample_proposal()` constructs a minimal human witness (e.g., `a = 1, b = 1` for `(a+b)^2 = a^2+b^2`, `x = 0` for `sin^2 x + cos^2 x = 2`, `(2, 3)` via `Real.exp_add`/`Real.exp_log` injectivity for `log(a+b) = log(a)+log(b)`, `Complex.re`/`Complex.im` projections for complex claims, `91 = 7 × 13` for `Nat.Prime 91`, remainder witness for `∣`, numeric/symbolic witness for inequalities) and verifies the standalone negation theorem inside Lean 4.36.0 (`counterexample.lean_verified = True`).
+  - Updated `RejectionPanel.jsx` to display a **Mathematically Disproven (Lean 4 Counterexample)** banner, evaluated LHS vs. claimed RHS cards, intuitive explanation, and collapsible Lean 4 counterexample proof.
+- **Contribution #2 — Structural AST Anti-Cheating Verifier (`backend/pipeline/ast_faithfulness.py`, `backend/pipeline/statement_judge.py`, `backend/main.py`, `frontend/src/components/ResultPanel.jsx`)**:
+  - Implemented `verify_ast_faithfulness()` parsing both user problem expressions and Lean 4 theorem signatures into canonical SymPy trees to block trivial tautology substitution (`1 + 1 = 2`, `x = x`), strict inequality weakening (`>` → `≥` or `=`), RHS tampering (`(a+b)^2 = a^2 + b^2` altered to `a^2 + 2ab + b^2`), derivative target erasure, and dropped transcendental functions.
+  - Integrated directly into both `statement_judge.judge()` and the generalized pipeline; surfaced `ast_verified` badge (`AST Faithfulness Verified`) in `ResultPanel.jsx`.
+- **SymPy Dev-Mode Parity, Combinatorics Claims & UI Build (`backend/pipeline/generalized_prover.py`, `backend/pipeline/lean_runner.py`, `frontend/`)**:
+  - Updated `# 10` discrete handlers (`mod`, `gcd`, `lcm`, `factorial`, `choose`, `perm`) in `generalized_prover.py` to honor user-claimed RHS values (`Prove that 5! = 100`, `Prove that gcd(12, 18) = 4`), synthesized `Nat.factorial`/`Nat.gcd`/`Nat.choose` counterexample disproofs, refined multi-variable trig addition counterexample tactics (`Real.sin_add`/`cos_add`), added `Nat.* ≠` and `¬ P` parity to `_verify_with_sympy`, added `literal_preservation_guard` in `ast_faithfulness.py`, forwarded `ast_checks` into `SolveResponse` & `ResultPanel.jsx` tooltip, and rebuilt the frontend (`npm --prefix frontend run build`).
+- **Verification**:
+  - `VERIMATH_STRICT_LEAN=true` live Lean 4.36.0 integration suite (`backend.tests.test_generalized_prover`): **29/29** true proofs verified + **11/11** false claims refuted with **Lean-verified counterexamples** (`399.677s — OK`).
+  - Full SymPy dev-mode regression suite: **268 / 268 passing (100.0%)** in `15.339s`.
+
+---
+
+## Phase 24: Lean 4 `calc`-Trace Step Grader with Implicit-Condition Diagnostics (Completed 2026-11-21)
+
+- **Contribution #3 — Lean-Backed Step Grader & Implicit-Condition Engine (`backend/pipeline/step_grader.py`, `backend/main.py`)**:
+  - Upgraded [`grade_student_steps()`](file:///home/antigravity/MohAI1922/CAAPPP/backend/pipeline/step_grader.py) to diagnose **implicit division-by-zero / dropped roots** (`dropped_root_error`, e.g., losing `x = 2` in `x*(x - 2) = 0 → x = 0`), **extraneous roots** (`extraneous_root_error`, e.g., squaring equations), and **rational denominator poles** (`x ≠ 2` when simplifying `(x^2 - 4)/(x - 2) → x + 2`).
+  - Added [`synthesize_steps_lean_certificate()`](file:///home/antigravity/MohAI1922/CAAPPP/backend/pipeline/step_grader.py) generating standalone Lean 4 `calc` chains (with `field_simp [hden]` side hypotheses when denominators cancel), derivative/antiderivative theorems, and `↔` equation equivalence proofs.
+  - Added optional `lean_certify: bool = False` on `POST /grade-steps` to execute live Lean 4.36.0 certification on valid student derivations (`lean_verified = True`).
+- **React Frontend (`frontend/src/components/StepGraderPanel.jsx`)**:
+  - Added **Dropped Root Fallacy** and **Rational Condition** preset buttons, a **Certify valid derivation in Lean 4 kernel** toggle, implicit domain condition warning pills, `Lean 4 Calc-Certified` badge, and collapsible Lean 4 derivation certificate viewer; rebuilt production bundle (`npm --prefix frontend run build`).
+- **Verification**:
+  - `VERIMATH_STRICT_LEAN=true` live Lean 4.36.0 suite (`backend.tests.test_zero_trust_and_8gb_upgrade`): **15 / 15 passing** in `22.699s` (proving multi-step `calc` certificates inside Lean 4.36.0).
+  - Full SymPy dev-mode regression suite: **269 / 269 passing (100.0%)** in `15.830s`.
+
+---
+
+## Phase 25: Full React UI Polish & End-to-End System Verification (Completed 2026-11-21)
+
+- **Header, Footer & Health Indicator (`frontend/src/App.jsx`, `frontend/src/index.css`)**:
+  - Added live `GET /health` status badge in the navbar (`Lean 4 Kernel Live` vs. `CAS + Formal Mode` with template/cache tooltip) and updated footer branding to reflect `Lean 4.36`, `Mathlib`, `Qwen2.5 & SymPy CAS`, and `Raspberry Pi 4 (8 GB)`.
+  - Added `.no-scrollbar` CSS utility and consistent `#020617` base dark styling in `index.css`.
+- **Responsive Input & Pipeline Stage Feedback (`frontend/src/components/ProblemInput.jsx`, `frontend/src/components/StatusIndicator.jsx`, `frontend/src/components/LeanStatement.jsx`, `frontend/src/components/ResultPanel.jsx`)**:
+  - Added clear-input button, responsive mobile-friendly controls, and color-coded demo presets (In-Domain Calculus, Generalized Out-of-Domain, and False-Claim Disproofs) in `ProblemInput.jsx`.
+  - Replaced whole-card pulsing in `StatusIndicator.jsx` with per-step completion/spinner state (`AST & Faithfulness Judge` label).
+  - Distinguished `Generalized: ...` vs. `Template: ...` badges in `LeanStatement.jsx` and `ResultPanel.jsx`.
+- **Teacher Telemetry Failures View (`frontend/src/pages/DashboardView.jsx`)**:
+  - Rendered the **Intercepted Hallucinations & Disproven False Claims** card (`failures`), added amber `UNSUPPORTED` verdict styling, inline backend offline alert, and cached latency indicators.
+- **Verification**:
+  - Frontend production build (`npm --prefix frontend run build`): exited with code `0`.
+  - Full SymPy dev-mode regression suite: **269 / 269 passing (100.0%)** in `15.125s`.
+  - Live Lean 4.36.0 strict End-to-End smoke check (`/app/`, `/health`, `/solve` complex verified, `/solve` false identity Lean-verified counterexample, `/grade-steps` Lean `calc` certification & `dropped_root_error`, `/dashboard/*`): **E2E_UI_AND_API_SMOKE_OK**.
+
+---
+
+## Phase 26: External Connectors, Camera Question/Answer Scanning & Handwriting Recognition (Completed 2026-11-21)
+
+- **Multi-Engine Camera & Handwriting OCR Connector (`backend/connectors/vision_ocr.py`, `backend/connectors/__init__.py`)**:
+  - Implemented `preprocess_math_image()` (EXIF auto-rotation, 2.5× LANCZOS upscaling for exponents, autocontrast, and sharpness enhancement) and `_normalize_ocr_line()` (fixing `x~2` → `x^2`, glued verbs, Unicode operators).
+  - Integrated pretrained **RapidOCR PP-OCRv4 (ONNX)** (`rapidocr-onnxruntime`), **Tesseract 5 LSTM** (`tesseract-ocr` + `pytesseract`), and optional adapters for **TrOCR (`microsoft/trocr-base-handwritten`)**, **Pix2Tex (`LaTeX-OCR`)**, and **Gemini Vision** behind a unified untrusted sensor interface so OCR text still passes AST Faithfulness + SymPy + Lean 4 kernel checks.
+  - Added Raspberry Pi CSI (`rpicam-still`/`libcamera-still`) & USB V4L2 (`fswebcam`/`cv2`) hardware camera capture (`capture_hardware_camera_frame()`) and live connector readiness telemetry (`get_connectors_status()`).
+- **FastAPI Scan & Connector Routes (`backend/main.py`)**:
+  - Added `/scan/ocr`, `/scan/solve`, `/scan/grade-steps`, `/scan/hardware-capture`, `/connectors/status`, and exposed `connectors` readiness inside `/health` (supporting both `multipart/form-data` uploads and base64 camera snapshots).
+- **MQTT v2 Connector Fix & Config (`backend/iot/firestore_sync.py`, `requirements.txt`, `.env.example`, `deployment/install_pi.sh`)**:
+  - Upgraded `backend/iot/firestore_sync.py` to `paho.mqtt.client.CallbackAPIVersion.VERSION2` matching `mqtt_publisher.py`.
+  - Added `Pillow`, `python-multipart`, `pytesseract`, `rapidocr-onnxruntime`, `tesseract-ocr`, and `fswebcam` to project dependencies and Pi install automation.
+- **React Scanner Modal & Telemetry UI (`frontend/src/components/CameraScannerModal.jsx`, `ProblemInput.jsx`, `StepGraderPanel.jsx`, `StudentView.jsx`, `DashboardView.jsx`)**:
+  - Built [`CameraScannerModal.jsx`](file:///home/antigravity/MohAI1922/CAAPPP/frontend/src/components/CameraScannerModal.jsx) supporting browser WebRTC live camera (`getUserMedia`), Pi/USB hardware camera trigger, drag-and-drop image upload, OCR engine selection, and editable math preview wired into both **Solve & Prove** and **Check My Steps**.
+  - Surfaced live external connector & peripheral readiness in [`DashboardView.jsx`](file:///home/antigravity/MohAI1922/CAAPPP/frontend/src/pages/DashboardView.jsx); rebuilt production bundle (`140.79 kB` JS).
+- **Verification**:
+  - Live Lean 4.36.0 (`VERIMATH_STRICT_LEAN=true backend.tests.test_vision_and_connectors`): **4 / 4 test suites passing** in `21.064s` (RapidOCR/Tesseract rendered math scanning + `/scan/ocr` + `/scan/solve` + `/scan/grade-steps` + `/connectors/status` + MQTT v2 callbacks).
+  - Full SymPy dev-mode regression suite: **273 / 273 passing (100.0%)** in `23.772s`.

@@ -58,6 +58,8 @@ def _get_llm():
     if not model_path:
         qwen_candidates = [
             os.path.join(models_dir, "qwen2_5_1_5b_verimath_pi4-q4_k_m.gguf"),
+            os.path.join(models_dir, "qwen2.5-3b-instruct-q4_k_m.gguf"),
+            os.path.join(models_dir, "qwen2.5-1.5b-instruct-q4_k_m.gguf"),
             os.path.join(models_dir, "phi3_verimath_model-q4_k_m.gguf"),
             os.path.join(models_dir, "Qwen2.5-1.5B-Instruct.Q4_K_M.gguf"),
         ]
@@ -72,8 +74,8 @@ def _get_llm():
         else:
             model_path = default_model
 
-    # On Raspberry Pi 4 (4 GB RAM), 2048 tokens context saves ~300 MB of RAM vs 4096
-    n_ctx = int(os.getenv("LLM_N_CTX", "2048"))
+    # On Raspberry Pi 4 (8 GB RAM), 4096 tokens context fits comfortably with Lean 4 + Mathlib
+    n_ctx = int(os.getenv("LLM_N_CTX", "4096"))
     n_threads = int(os.getenv("LLM_N_THREADS", "4"))
 
     if not os.path.exists(model_path):

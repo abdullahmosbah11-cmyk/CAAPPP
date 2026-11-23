@@ -80,6 +80,7 @@ class JudgeResult:
     back_translation: str           # Human-readable restatement of the Lean statement
     similarity_score: float         # 0.0 – 1.0 (fuzzy match score)
     reason: Optional[str] = None    # Explanation of mismatch (if any)
+    ast_checks: Optional[list[str]] = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -130,17 +131,28 @@ def judge(
         f"(threshold: {MATCH_THRESHOLD})"
     )
 
-    # Step 4: Additional checks: numbers, mathematical functions, and physical entities
+    # Step 4: Additional checks: numbers, mathematical functions, physical entities, semantic inversions, and AST faithfulness
+    from backend.pipeline.ast_faithfulness import verify_ast_faithfulness
     numeric_check = _check_numbers_match(problem, back_translation)
     function_check = _check_math_functions_match(problem, back_translation)
     entity_check = _check_key_entities_match(problem, back_translation)
+    inversion_check = _check_semantic_inversions(problem, back_translation, slot_values)
+    ast_check = verify_ast_faithfulness(problem, formalizer_result.lean_statement)
 
     # Step 5: Verdict
-    if similarity >= MATCH_THRESHOLD and numeric_check.passed and function_check.passed and entity_check.passed:
+    if (
+        similarity >= MATCH_THRESHOLD
+        and numeric_check.passed
+        and function_check.passed
+        and entity_check.passed
+        and inversion_check.passed
+        and ast_check.passed
+    ):
         return JudgeResult(
             verdict="MATCH",
             back_translation=back_translation,
             similarity_score=similarity,
+            ast_checks=ast_check.checks_run,
         )
     else:
         reason_parts = []
@@ -154,6 +166,10 @@ def judge(
             reason_parts.append(function_check.reason)
         if not entity_check.passed:
             reason_parts.append(entity_check.reason)
+        if not inversion_check.passed:
+            reason_parts.append(inversion_check.reason)
+        if not ast_check.passed and ast_check.reason:
+            reason_parts.append(ast_check.reason)
 
         return JudgeResult(
             verdict="MISMATCH",
@@ -161,6 +177,105 @@ def judge(
             similarity_score=similarity,
             reason=" | ".join(reason_parts),
         )
+
+
+@dataclass
+class _SemanticInversionResult:
+    passed: bool
+    reason: Optional[str] = None
+
+
+def _check_semantic_inversions(
+    problem: str,
+    back_translation: str,
+    slot_values: Optional[dict[str, str]] = None,
+) -> _SemanticInversionResult:
+    """
+    Detect semantic inversions that lexical token-set similarity misses:
+      1. Flipped inequalities (< vs >, <= vs >=, less than vs greater than).
+      2. Swapped derivative targets (dy/dx vs dx/dy, dx/dt vs dy/dt).
+      3. Swapped variable bindings (x = a, y = b vs x = b, y = a).
+      4. Direct algebraic sign inversions on identical operand pairs (e.g. x - 5 = 2 vs x + 5 = 2).
+    """
+    prob_l = problem.lower().replace("+ -", "- ").replace("+-", "-").replace("−", "-")
+    back_l = back_translation.lower().replace("+ -", "- ").replace("+-", "-").replace("−", "-")
+
+    # 1. Inequality direction check
+    def _ineq_dirs(text: str) -> set[str]:
+        dirs = set()
+        if re.search(r"<=|≤|\bat most\b|\bless than or equal", text):
+            dirs.add("le")
+        if re.search(r">=|≥|\bat least\b|\bgreater than or equal", text):
+            dirs.add("ge")
+        # Strict inequalities (excluding <= and >=)
+        if re.search(r"(?<![<>=])<(?!=)|\bless than\b(?!\s+or\s+equal)", text):
+            dirs.add("lt")
+        if re.search(r"(?<![<>=])>(?!=)|\bgreater than\b(?!\s+or\s+equal)", text):
+            dirs.add("gt")
+        return dirs
+
+    p_ineq = _ineq_dirs(prob_l)
+    b_ineq = _ineq_dirs(back_l)
+    if p_ineq and b_ineq:
+        if ("lt" in p_ineq and "gt" in b_ineq and "lt" not in b_ineq) or (
+            "gt" in p_ineq and "lt" in b_ineq and "gt" not in b_ineq
+        ):
+            return _SemanticInversionResult(
+                passed=False,
+                reason=f"Inequality direction inverted between problem ({p_ineq}) and back-translation ({b_ineq}).",
+            )
+        if ("le" in p_ineq and "ge" in b_ineq and "le" not in b_ineq) or (
+            "ge" in p_ineq and "le" in b_ineq and "ge" not in b_ineq
+        ):
+            return _SemanticInversionResult(
+                passed=False,
+                reason=f"Inequality direction inverted between problem ({p_ineq}) and back-translation ({b_ineq}).",
+            )
+
+    # 2. Swapped derivative target check (e.g. dy/dx vs dx/dy, dx/dt vs dy/dt)
+    deriv_pairs = [("dy/dx", "dx/dy"), ("dx/dt", "dy/dt"), ("dh/dt", "dr/dt")]
+    for d1, d2 in deriv_pairs:
+        if d1 in prob_l and d2 in back_l and d1 not in back_l and d2 not in prob_l:
+            return _SemanticInversionResult(
+                passed=False,
+                reason=f"Derivative target inverted: problem asks for {d1} but formalization computes {d2}.",
+            )
+        if d2 in prob_l and d1 in back_l and d2 not in back_l and d1 not in prob_l:
+            return _SemanticInversionResult(
+                passed=False,
+                reason=f"Derivative target inverted: problem asks for {d2} but formalization computes {d1}.",
+            )
+
+    # 3. Swapped variable bindings check (e.g. x = 2, y = 5 vs x = 5, y = 2)
+    def _extract_bindings(text: str) -> dict[str, str]:
+        bindings = {}
+        for m in re.finditer(r"\b([xy])\s*=\s*(-?\d+(?:\.\d+)?)\b", text):
+            bindings[m.group(1)] = m.group(2)
+        return bindings
+
+    p_bind = _extract_bindings(prob_l)
+    b_bind = _extract_bindings(back_l)
+    if "x" in p_bind and "y" in p_bind and "x" in b_bind and "y" in b_bind:
+        if p_bind["x"] != p_bind["y"] and p_bind["x"] == b_bind["y"] and p_bind["y"] == b_bind["x"]:
+            return _SemanticInversionResult(
+                passed=False,
+                reason=f"Variable bindings swapped: problem has x={p_bind['x']}, y={p_bind['y']} but formalization has x={b_bind['x']}, y={b_bind['y']}.",
+            )
+
+    # 4. Algebraic binary sign flip on equations (e.g. "3x + 7 = 22" vs "3x - 7 = 22")
+    if "=" in prob_l and "=" in back_l:
+        p_eq_terms = re.findall(r"([a-z0-9\)])\s*([+\-])\s*(\d+(?:\.\d+)?)\s*=", prob_l)
+        b_eq_terms = re.findall(r"([a-z0-9\)])\s*([+\-])\s*(\d+(?:\.\d+)?)\s*=", back_l)
+        if p_eq_terms and b_eq_terms:
+            for _, p_op, p_num in p_eq_terms:
+                for _, b_op, b_num in b_eq_terms:
+                    if p_num == b_num and p_op != b_op:
+                        return _SemanticInversionResult(
+                            passed=False,
+                            reason=f"Sign inversion detected: '{p_op} {p_num}' in problem became '{b_op} {b_num}' in back-translation.",
+                        )
+
+    return _SemanticInversionResult(passed=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
